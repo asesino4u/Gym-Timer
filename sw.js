@@ -1,5 +1,5 @@
 const CACHE = 'gym-timer-v1';
-const FILES = ['/', '/index.html', '/manifest.json', '/icon.svg'];
+const FILES = ['/Gym-Timer/', '/Gym-Timer/index.html', '/Gym-Timer/manifest.json', '/Gym-Timer/icon.svg'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)));
