@@ -185,6 +185,7 @@
     .main-btn:active { transform: scale(0.95); opacity: 0.85; }
     .main-btn.idle    { background: #4ade80; }
     .main-btn.running { background: #f87171; }
+    .main-btn.paused  { background: #4ade80; }
     .main-btn.done    { background: #facc15; }
 
     .hint {
@@ -278,7 +279,7 @@
     ];
 
     let selectedIndex = 1;
-    let state = 'idle'; // idle | running | done
+    let state = 'idle'; // idle | running | paused | done
     let remaining = INTERVALS[1].seconds;
     let tickInterval = null;
     let audioCtx = null;
@@ -402,12 +403,7 @@
       if (navigator.vibrate) navigator.vibrate([300, 100, 300, 100, 300]);
     }
 
-    function startTimer() {
-      remaining = INTERVALS[selectedIndex].seconds;
-      state = 'running';
-      getIntervalBtns().forEach(b => b.disabled = true);
-      render();
-
+    function runTimerInterval() {
       tickInterval = setInterval(() => {
         remaining--;
         if (remaining <= 0) {
@@ -421,12 +417,26 @@
       }, 1000);
     }
 
-    function stopTimer() {
-      clearInterval(tickInterval);
-      state = 'idle';
+    function startTimer() {
       remaining = INTERVALS[selectedIndex].seconds;
+      state = 'running';
+      getIntervalBtns().forEach(b => b.disabled = true);
+      render();
+      runTimerInterval();
+    }
+
+    function pauseTimer() {
+      clearInterval(tickInterval);
+      state = 'paused';
       getIntervalBtns().forEach(b => b.disabled = false);
       render();
+    }
+
+    function resumeTimer() {
+      state = 'running';
+      getIntervalBtns().forEach(b => b.disabled = true);
+      render();
+      runTimerInterval();
     }
 
     function render() {
@@ -442,12 +452,14 @@
       // Button
       mainBtn.className = 'main-btn ' + state;
       if (state === 'idle')    { mainBtn.textContent = 'START'; }
-      if (state === 'running') { mainBtn.textContent = 'STOP';  }
+      if (state === 'running') { mainBtn.textContent = 'PAUSE';  }
+      if (state === 'paused')  { mainBtn.textContent = 'WEITER'; }
       if (state === 'done')    { mainBtn.textContent = 'WEITER'; }
 
       // Hint
       if (state === 'idle')    hint.textContent = 'Wähle deine Pausenzeit';
-      if (state === 'running') hint.textContent = 'Tippe STOP um abzubrechen';
+      if (state === 'running') hint.textContent = 'Tippe PAUSE zum Anhalten';
+      if (state === 'paused')  hint.textContent = 'Pausiert — tippe WEITER';
       if (state === 'done')    hint.textContent = 'Bereit für den nächsten Satz?';
 
       // Set counter
@@ -458,9 +470,10 @@
       // Init AudioContext on first user gesture (required by browsers)
       if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-      if (state === 'done') { setCount++; startTimer(); }
-      else if (state === 'idle') startTimer();
-      else if (state === 'running') stopTimer();
+      if (state === 'done')         { setCount++; startTimer(); }
+      else if (state === 'idle')    startTimer();
+      else if (state === 'running') pauseTimer();
+      else if (state === 'paused')  resumeTimer();
     });
 
     // Reset counter button
