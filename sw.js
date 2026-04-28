@@ -1,4 +1,4 @@
-const CACHE = 'gym-timer-v1';
+const CACHE = 'gym-timer-v2';
 const FILES = ['/Gym-Timer/', '/Gym-Timer/index.html', '/Gym-Timer/manifest.json', '/Gym-Timer/icon.svg'];
 
 self.addEventListener('install', e => {

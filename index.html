@@ -67,6 +67,35 @@
       cursor: default;
     }
 
+    /* Set counter — centered between timer right edge and viewport right edge,
+       and vertically between timer bottom and main button top */
+    .set-counter {
+      position: fixed;
+      left: calc(75% + 55px);
+      top: 56%;
+      transform: translate(-50%, -50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .set-number {
+      font-size: 72px;
+      font-weight: 800;
+      color: #facc15;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .set-label {
+      font-size: 16px;
+      font-weight: 600;
+      color: #475569;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+    }
+
     /* Timer circle */
     .timer-circle {
       width: 220px;
@@ -136,6 +165,47 @@
       height: 20px;
       text-align: center;
     }
+
+    /* Sound selector */
+    .sound-section {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      margin-top: -16px;
+    }
+
+    .sound-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: #475569;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+    }
+
+    .sound-options {
+      display: flex;
+      gap: 8px;
+    }
+
+    .sound-btn {
+      padding: 8px 14px;
+      border-radius: 20px;
+      border: 1.5px solid #334155;
+      background: #1e293b;
+      color: #94a3b8;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      transition: all 0.15s;
+    }
+
+    .sound-btn.active {
+      border-color: #facc15;
+      background: #422006;
+      color: #facc15;
+    }
   </style>
 </head>
 <body>
@@ -149,9 +219,24 @@
     <div class="done-label">Fertig!</div>
   </div>
 
+  <div class="set-counter">
+    <div class="set-number" id="setNumber">1</div>
+    <div class="set-label">Satz</div>
+  </div>
+
   <button class="main-btn idle" id="mainBtn">START</button>
 
   <p class="hint" id="hint">Wähle deine Pausenzeit</p>
+
+  <div class="sound-section">
+    <div class="sound-label">Signal</div>
+    <div class="sound-options" id="soundOptions">
+      <button class="sound-btn active" data-sound="beep">Beep</button>
+      <button class="sound-btn" data-sound="bell">Glocke</button>
+      <button class="sound-btn" data-sound="microwave">Mikrowelle</button>
+      <button class="sound-btn" data-sound="voice">Stimme</button>
+    </div>
+  </div>
 
   <script>
     const INTERVALS = [
@@ -167,12 +252,15 @@
     let remaining = INTERVALS[1].seconds;
     let tickInterval = null;
     let audioCtx = null;
+    let setCount = 1;
+    let soundType = localStorage.getItem('gymTimerSound') || 'beep';
 
     const intervalsEl = document.getElementById('intervals');
     const timerCircle = document.getElementById('timerCircle');
     const timerDisplay = document.getElementById('timerDisplay');
     const mainBtn = document.getElementById('mainBtn');
     const hint = document.getElementById('hint');
+    const setNumber = document.getElementById('setNumber');
 
     // Build interval buttons
     INTERVALS.forEach((item, i) => {
@@ -189,6 +277,7 @@
 
     function selectInterval(index) {
       if (state === 'running') return;
+      if (state === 'done') setCount = 1;
       selectedIndex = index;
       getIntervalBtns().forEach((b, i) => b.classList.toggle('active', i === index));
       state = 'idle';
@@ -202,27 +291,84 @@
       return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
     }
 
-    function playBeep() {
-      try {
-        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        const ctx = audioCtx;
+    function ensureAudio() {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      return audioCtx;
+    }
 
-        // Three short beeps
-        [0, 0.35, 0.70].forEach(offset => {
+    function playBeepSound() {
+      const ctx = ensureAudio();
+      [0, 0.35, 0.70].forEach(offset => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = 'sine';
+        osc.frequency.value = 880;
+        gain.gain.setValueAtTime(0.6, ctx.currentTime + offset);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + offset + 0.25);
+        osc.start(ctx.currentTime + offset);
+        osc.stop(ctx.currentTime + offset + 0.25);
+      });
+    }
+
+    function playBellSound() {
+      const ctx = ensureAudio();
+      // Boxing bell: two strikes, each a mix of frequencies with long decay
+      [0, 0.45].forEach(offset => {
+        [440, 880, 1320, 1760].forEach((freq, i) => {
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
           osc.connect(gain);
           gain.connect(ctx.destination);
-          osc.type = 'sine';
-          osc.frequency.value = 880;
-          gain.gain.setValueAtTime(0.6, ctx.currentTime + offset);
-          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + offset + 0.25);
+          osc.type = i === 0 ? 'triangle' : 'sine';
+          osc.frequency.value = freq;
+          const peak = 0.4 / (i + 1);
+          gain.gain.setValueAtTime(peak, ctx.currentTime + offset);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + offset + 1.2);
           osc.start(ctx.currentTime + offset);
-          osc.stop(ctx.currentTime + offset + 0.25);
+          osc.stop(ctx.currentTime + offset + 1.2);
         });
+      });
+    }
+
+    function playMicrowaveSound() {
+      const ctx = ensureAudio();
+      // 4 short sharp beeps, square wave for digital character
+      [0, 0.28, 0.56, 0.84].forEach(offset => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = 'square';
+        osc.frequency.value = 2000;
+        gain.gain.setValueAtTime(0.0, ctx.currentTime + offset);
+        gain.gain.linearRampToValueAtTime(0.25, ctx.currentTime + offset + 0.005);
+        gain.gain.setValueAtTime(0.25, ctx.currentTime + offset + 0.10);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + offset + 0.13);
+        osc.start(ctx.currentTime + offset);
+        osc.stop(ctx.currentTime + offset + 0.13);
+      });
+    }
+
+    function playVoiceSound() {
+      try {
+        const utter = new SpeechSynthesisUtterance('Pause vorbei');
+        utter.lang = 'de-DE';
+        utter.rate = 1;
+        utter.pitch = 1;
+        speechSynthesis.speak(utter);
+      } catch(e) {}
+    }
+
+    function playSignal() {
+      try {
+        if (soundType === 'beep')      playBeepSound();
+        if (soundType === 'bell')      playBellSound();
+        if (soundType === 'microwave') playMicrowaveSound();
+        if (soundType === 'voice')     playVoiceSound();
       } catch(e) {}
 
-      // Vibration fallback
       if (navigator.vibrate) navigator.vibrate([300, 100, 300, 100, 300]);
     }
 
@@ -238,7 +384,8 @@
           remaining = 0;
           clearInterval(tickInterval);
           state = 'done';
-          playBeep();
+          getIntervalBtns().forEach(b => b.disabled = false);
+          playSignal();
         }
         render();
       }, 1000);
@@ -272,15 +419,36 @@
       if (state === 'idle')    hint.textContent = 'Wähle deine Pausenzeit';
       if (state === 'running') hint.textContent = 'Tippe STOP um abzubrechen';
       if (state === 'done')    hint.textContent = 'Bereit für den nächsten Satz?';
+
+      // Set counter
+      setNumber.textContent = setCount;
     }
 
     mainBtn.addEventListener('click', () => {
       // Init AudioContext on first user gesture (required by browsers)
       if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-      if (state === 'idle' || state === 'done') startTimer();
+      if (state === 'done') { setCount++; startTimer(); }
+      else if (state === 'idle') startTimer();
       else if (state === 'running') stopTimer();
     });
+
+    // Sound selector
+    const soundOptions = document.getElementById('soundOptions');
+    function applySoundSelection() {
+      soundOptions.querySelectorAll('.sound-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.sound === soundType));
+    }
+    soundOptions.addEventListener('click', e => {
+      const btn = e.target.closest('.sound-btn');
+      if (!btn) return;
+      soundType = btn.dataset.sound;
+      localStorage.setItem('gymTimerSound', soundType);
+      applySoundSelection();
+      ensureAudio();
+      playSignal(); // preview
+    });
+    applySoundSelection();
 
     // Service Worker
     if ('serviceWorker' in navigator) {
