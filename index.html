@@ -96,6 +96,23 @@
       letter-spacing: 1.5px;
     }
 
+    .reset-btn {
+      margin-top: 4px;
+      padding: 6px 12px;
+      border-radius: 14px;
+      border: 1.5px solid #334155;
+      background: #1e293b;
+      color: #94a3b8;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .reset-btn:active { opacity: 0.7; }
+
     /* Timer circle */
     .timer-circle {
       width: 220px;
@@ -222,6 +239,7 @@
   <div class="set-counter">
     <div class="set-number" id="setNumber">1</div>
     <div class="set-label">Satz</div>
+    <button class="reset-btn" id="resetBtn">Reset</button>
   </div>
 
   <button class="main-btn idle" id="mainBtn">START</button>
@@ -431,6 +449,12 @@
       if (state === 'done') { setCount++; startTimer(); }
       else if (state === 'idle') startTimer();
       else if (state === 'running') stopTimer();
+    });
+
+    // Reset counter button
+    document.getElementById('resetBtn').addEventListener('click', () => {
+      setCount = 1;
+      render();
     });
 
     // Sound selector
