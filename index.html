@@ -21,15 +21,15 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
-      gap: 32px;
-      padding: 24px;
+      justify-content: space-around;
+      gap: 12px;
+      padding: 16px 12px;
       overflow: hidden;
       touch-action: manipulation;
     }
 
     h1 {
-      font-size: 28px;
+      font-size: 24px;
       font-weight: 700;
       letter-spacing: 1px;
       color: #e2e8f0;
@@ -38,22 +38,24 @@
     /* Interval buttons */
     .intervals {
       display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
+      gap: 6px;
+      flex-wrap: nowrap;
       justify-content: center;
+      width: 100%;
     }
 
     .interval-btn {
-      padding: 10px 18px;
-      border-radius: 24px;
+      padding: 9px 12px;
+      border-radius: 22px;
       border: 1.5px solid #334155;
       background: #1e293b;
       color: #94a3b8;
-      font-size: 15px;
+      font-size: 14px;
       font-weight: 600;
       cursor: pointer;
       transition: all 0.15s;
       -webkit-tap-highlight-color: transparent;
+      white-space: nowrap;
     }
 
     .interval-btn.active {
@@ -67,21 +69,30 @@
       cursor: default;
     }
 
-    /* Set counter — centered between timer right edge and viewport right edge,
-       and vertically between timer bottom and main button top */
-    .set-counter {
-      position: fixed;
-      left: calc(75% + 55px);
-      top: 56%;
-      transform: translate(-50%, -50%);
+    /* Center stack: timer + button + counter */
+    .center-stack {
+      position: relative;
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 6px;
+      gap: 18px;
+    }
+
+    /* Set counter — absolutely positioned within center-stack:
+       vertically centered between timer and main button, anchored to viewport right edge */
+    .set-counter {
+      position: absolute;
+      top: 50%;
+      right: calc(50% - 50vw + 12px);
+      transform: translateY(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
     }
 
     .set-number {
-      font-size: 72px;
+      font-size: 56px;
       font-weight: 800;
       color: #facc15;
       line-height: 1;
@@ -89,7 +100,7 @@
     }
 
     .set-label {
-      font-size: 16px;
+      font-size: 13px;
       font-weight: 600;
       color: #475569;
       text-transform: uppercase;
@@ -97,13 +108,13 @@
     }
 
     .reset-btn {
-      margin-top: 4px;
-      padding: 6px 12px;
-      border-radius: 14px;
+      margin-top: 2px;
+      padding: 5px 10px;
+      border-radius: 12px;
       border: 1.5px solid #334155;
       background: #1e293b;
       color: #94a3b8;
-      font-size: 11px;
+      font-size: 10px;
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 1px;
@@ -115,8 +126,8 @@
 
     /* Timer circle */
     .timer-circle {
-      width: 220px;
-      height: 220px;
+      width: 190px;
+      height: 190px;
       border-radius: 50%;
       border: 5px solid #334155;
       background: #1e293b;
@@ -133,7 +144,7 @@
     }
 
     .timer-display {
-      font-size: 52px;
+      font-size: 46px;
       font-weight: 800;
       font-variant-numeric: tabular-nums;
       color: #e2e8f0;
@@ -141,7 +152,7 @@
     }
 
     .timer-circle.done .timer-display {
-      font-size: 64px;
+      font-size: 56px;
       color: #4ade80;
     }
 
@@ -157,11 +168,11 @@
 
     /* Main button */
     .main-btn {
-      width: 180px;
-      height: 180px;
+      width: 150px;
+      height: 150px;
       border-radius: 50%;
       border: none;
-      font-size: 28px;
+      font-size: 24px;
       font-weight: 900;
       letter-spacing: 2px;
       color: #0f0f1a;
@@ -188,8 +199,7 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 8px;
-      margin-top: -16px;
+      gap: 6px;
     }
 
     .sound-label {
@@ -206,12 +216,12 @@
     }
 
     .sound-btn {
-      padding: 8px 14px;
-      border-radius: 20px;
+      padding: 7px 11px;
+      border-radius: 18px;
       border: 1.5px solid #334155;
       background: #1e293b;
       color: #94a3b8;
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 600;
       cursor: pointer;
       -webkit-tap-highlight-color: transparent;
@@ -231,18 +241,20 @@
 
   <div class="intervals" id="intervals"></div>
 
-  <div class="timer-circle" id="timerCircle">
-    <div class="timer-display" id="timerDisplay">01:00</div>
-    <div class="done-label">Fertig!</div>
-  </div>
+  <div class="center-stack">
+    <div class="timer-circle" id="timerCircle">
+      <div class="timer-display" id="timerDisplay">01:00</div>
+      <div class="done-label">Fertig!</div>
+    </div>
 
-  <div class="set-counter">
-    <div class="set-number" id="setNumber">1</div>
-    <div class="set-label">Satz</div>
-    <button class="reset-btn" id="resetBtn">Reset</button>
-  </div>
+    <button class="main-btn idle" id="mainBtn">START</button>
 
-  <button class="main-btn idle" id="mainBtn">START</button>
+    <div class="set-counter">
+      <div class="set-number" id="setNumber">1</div>
+      <div class="set-label">Satz</div>
+      <button class="reset-btn" id="resetBtn">Reset</button>
+    </div>
+  </div>
 
   <p class="hint" id="hint">Wähle deine Pausenzeit</p>
 
