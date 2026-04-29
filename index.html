@@ -126,8 +126,8 @@
 
     /* Timer (rounded rectangle) */
     .timer-circle {
-      width: 260px;
-      height: 140px;
+      width: 280px;
+      height: 160px;
       border-radius: 24px;
       border: 5px solid #334155;
       background: #1e293b;
@@ -144,7 +144,7 @@
     }
 
     .timer-display {
-      font-size: 64px;
+      font-size: 80px;
       font-weight: 800;
       font-variant-numeric: tabular-nums;
       color: #e2e8f0;
@@ -410,6 +410,7 @@
           remaining = 0;
           clearInterval(tickInterval);
           state = 'done';
+          setCount++;
           getIntervalBtns().forEach(b => b.disabled = false);
           playSignal();
         }
@@ -470,7 +471,7 @@
       // Init AudioContext on first user gesture (required by browsers)
       if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-      if (state === 'done')         { setCount++; startTimer(); }
+      if (state === 'done')         startTimer();
       else if (state === 'idle')    startTimer();
       else if (state === 'running') pauseTimer();
       else if (state === 'paused')  resumeTimer();
