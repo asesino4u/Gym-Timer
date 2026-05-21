@@ -13,6 +13,22 @@
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+    html { background: #0f0f1a; }
+
+    /* Force portrait orientation visually — when phone is rotated to landscape,
+       counter-rotate the entire body so it appears as portrait. */
+    @media screen and (orientation: landscape) and (max-device-width: 950px) {
+      body {
+        transform: rotate(-90deg);
+        transform-origin: left top;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        width: 100vh;
+        height: 100vw;
+      }
+    }
+
     body {
       background: #0f0f1a;
       color: #e2e8f0;
@@ -195,45 +211,6 @@
       text-align: center;
     }
 
-    /* Sound selector */
-    .sound-section {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 6px;
-    }
-
-    .sound-label {
-      font-size: 11px;
-      font-weight: 600;
-      color: #475569;
-      text-transform: uppercase;
-      letter-spacing: 1.5px;
-    }
-
-    .sound-options {
-      display: flex;
-      gap: 8px;
-    }
-
-    .sound-btn {
-      padding: 7px 11px;
-      border-radius: 18px;
-      border: 1.5px solid #334155;
-      background: #1e293b;
-      color: #94a3b8;
-      font-size: 12px;
-      font-weight: 600;
-      cursor: pointer;
-      -webkit-tap-highlight-color: transparent;
-      transition: all 0.15s;
-    }
-
-    .sound-btn.active {
-      border-color: #facc15;
-      background: #422006;
-      color: #facc15;
-    }
   </style>
 </head>
 <body>
@@ -259,16 +236,6 @@
 
   <p class="hint" id="hint">Wähle deine Pausenzeit</p>
 
-  <div class="sound-section">
-    <div class="sound-label">Signal</div>
-    <div class="sound-options" id="soundOptions">
-      <button class="sound-btn active" data-sound="beep">Beep</button>
-      <button class="sound-btn" data-sound="bell">Glocke</button>
-      <button class="sound-btn" data-sound="microwave">Mikrowelle</button>
-      <button class="sound-btn" data-sound="voice">Stimme</button>
-    </div>
-  </div>
-
   <script>
     const INTERVALS = [
       { label: '30s', seconds: 30 },
@@ -284,7 +251,6 @@
     let tickInterval = null;
     let audioCtx = null;
     let setCount = 1;
-    let soundType = localStorage.getItem('gymTimerSound') || 'beep';
 
     const intervalsEl = document.getElementById('intervals');
     const timerCircle = document.getElementById('timerCircle');
@@ -343,63 +309,8 @@
       });
     }
 
-    function playBellSound() {
-      const ctx = ensureAudio();
-      // Boxing bell: two strikes, each a mix of frequencies with long decay
-      [0, 0.45].forEach(offset => {
-        [440, 880, 1320, 1760].forEach((freq, i) => {
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          osc.type = i === 0 ? 'triangle' : 'sine';
-          osc.frequency.value = freq;
-          const peak = 0.4 / (i + 1);
-          gain.gain.setValueAtTime(peak, ctx.currentTime + offset);
-          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + offset + 1.2);
-          osc.start(ctx.currentTime + offset);
-          osc.stop(ctx.currentTime + offset + 1.2);
-        });
-      });
-    }
-
-    function playMicrowaveSound() {
-      const ctx = ensureAudio();
-      // 4 short sharp beeps, square wave for digital character
-      [0, 0.28, 0.56, 0.84].forEach(offset => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.type = 'square';
-        osc.frequency.value = 2000;
-        gain.gain.setValueAtTime(0.0, ctx.currentTime + offset);
-        gain.gain.linearRampToValueAtTime(0.25, ctx.currentTime + offset + 0.005);
-        gain.gain.setValueAtTime(0.25, ctx.currentTime + offset + 0.10);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + offset + 0.13);
-        osc.start(ctx.currentTime + offset);
-        osc.stop(ctx.currentTime + offset + 0.13);
-      });
-    }
-
-    function playVoiceSound() {
-      try {
-        const utter = new SpeechSynthesisUtterance('Pause vorbei');
-        utter.lang = 'de-DE';
-        utter.rate = 1;
-        utter.pitch = 1;
-        speechSynthesis.speak(utter);
-      } catch(e) {}
-    }
-
     function playSignal() {
-      try {
-        if (soundType === 'beep')      playBeepSound();
-        if (soundType === 'bell')      playBellSound();
-        if (soundType === 'microwave') playMicrowaveSound();
-        if (soundType === 'voice')     playVoiceSound();
-      } catch(e) {}
-
+      try { playBeepSound(); } catch(e) {}
       if (navigator.vibrate) navigator.vibrate([300, 100, 300, 100, 300]);
     }
 
@@ -482,23 +393,6 @@
       setCount = 1;
       render();
     });
-
-    // Sound selector
-    const soundOptions = document.getElementById('soundOptions');
-    function applySoundSelection() {
-      soundOptions.querySelectorAll('.sound-btn').forEach(b =>
-        b.classList.toggle('active', b.dataset.sound === soundType));
-    }
-    soundOptions.addEventListener('click', e => {
-      const btn = e.target.closest('.sound-btn');
-      if (!btn) return;
-      soundType = btn.dataset.sound;
-      localStorage.setItem('gymTimerSound', soundType);
-      applySoundSelection();
-      ensureAudio();
-      playSignal(); // preview
-    });
-    applySoundSelection();
 
     // Service Worker
     if ('serviceWorker' in navigator) {
