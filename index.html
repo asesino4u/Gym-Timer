@@ -16,17 +16,25 @@
     html { background: #0f0f1a; }
 
     /* Force portrait orientation visually — when phone is rotated to landscape,
-       counter-rotate the entire body so it appears as portrait. */
-    @media screen and (orientation: landscape) and (max-device-width: 950px) {
-      body {
-        transform: rotate(-90deg);
-        transform-origin: left top;
-        position: absolute;
-        top: 100%;
-        left: 0;
-        width: 100vh;
-        height: 100vw;
-      }
+       counter-rotate the body so the WEITER button always points toward the
+       charging port (i.e. the bottom of the screen in physical portrait). */
+    body[data-rot="left"] {
+      transform: rotate(-90deg);
+      transform-origin: left top;
+      position: absolute;
+      top: 100%;
+      left: 0;
+      width: 100vh;
+      height: 100vw;
+    }
+    body[data-rot="right"] {
+      transform: rotate(90deg);
+      transform-origin: left top;
+      position: absolute;
+      top: 0;
+      left: 100%;
+      width: 100vh;
+      height: 100vw;
     }
 
     body {
@@ -393,6 +401,32 @@
       setCount = 1;
       render();
     });
+
+    // Orientation handling — keep WEITER button pointing toward charging port
+    function updateRotation() {
+      // angle: 0 = portrait, 90 = rotated counter-clockwise (top tilts left),
+      //       -90/270 = rotated clockwise (top tilts right), 180 = upside down
+      let angle = 0;
+      if (screen.orientation && typeof screen.orientation.angle === 'number') {
+        angle = screen.orientation.angle;
+      } else if (typeof window.orientation === 'number') {
+        angle = window.orientation;
+      }
+
+      if (angle === 90) {
+        document.body.dataset.rot = 'left';   // phone rotated left (charging port on right)
+      } else if (angle === -90 || angle === 270) {
+        document.body.dataset.rot = 'right';  // phone rotated right (charging port on left)
+      } else {
+        document.body.dataset.rot = 'portrait';
+      }
+    }
+    window.addEventListener('orientationchange', updateRotation);
+    window.addEventListener('resize', updateRotation);
+    if (screen.orientation && screen.orientation.addEventListener) {
+      screen.orientation.addEventListener('change', updateRotation);
+    }
+    updateRotation();
 
     // Service Worker
     if ('serviceWorker' in navigator) {
