@@ -50,7 +50,16 @@
       padding: 16px 12px;
       overflow: hidden;
       touch-action: manipulation;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
     }
+
+    /* Only react to taps on actual buttons — non-button areas (background, timer
+       display, counter text, hint, title) ignore touch input. */
+    body * { pointer-events: none; }
+    button   { pointer-events: auto; }
 
     h1 {
       font-size: 24px;
