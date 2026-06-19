@@ -58,8 +58,10 @@
 
     /* Only react to taps on actual buttons — non-button areas (background, timer
        display, counter text, hint, title) ignore touch input. */
-    body * { pointer-events: none; }
-    button   { pointer-events: auto; }
+    h1, .timer-circle, .timer-display, .done-label,
+    .set-number, .set-label, .hint {
+      pointer-events: none;
+    }
 
     h1 {
       font-size: 24px;
