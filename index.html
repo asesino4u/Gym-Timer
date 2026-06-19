@@ -45,8 +45,8 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: space-around;
-      gap: 12px;
+      justify-content: flex-start;
+      gap: 25px;
       padding: 16px 12px;
       overflow: hidden;
       touch-action: manipulation;
@@ -93,21 +93,24 @@
       cursor: default;
     }
 
-    /* Center stack: timer + button + counter */
+    /* Center stack: timer + button + counter — spans full body width so counter
+       can anchor to the right edge in any orientation (avoids vw which is broken
+       after CSS body rotation in landscape). */
     .center-stack {
       position: relative;
       display: flex;
       flex-direction: column;
       align-items: center;
       gap: 18px;
+      width: 100%;
     }
 
     /* Set counter — vertically centered with the main button (bottom of center-stack),
-       horizontally anchored to viewport right edge */
+       horizontally anchored to right edge of stack (= body right inset). */
     .set-counter {
       position: absolute;
       top: calc(100% - 95px); /* 95 = main-btn height / 2 → button center */
-      right: calc(50% - 50vw + 12px);
+      right: 0;
       transform: translateY(-50%);
       display: flex;
       flex-direction: column;
@@ -227,6 +230,8 @@
 
   <div class="intervals" id="intervals"></div>
 
+  <p class="hint" id="hint">Wähle deine Pausenzeit</p>
+
   <div class="center-stack">
     <div class="timer-circle" id="timerCircle">
       <div class="timer-display" id="timerDisplay">01:00</div>
@@ -242,8 +247,6 @@
     </div>
   </div>
 
-  <p class="hint" id="hint">Wähle deine Pausenzeit</p>
-
   <script>
     const INTERVALS = [
       { label: '30s', seconds: 30 },
@@ -256,6 +259,7 @@
     let selectedIndex = 1;
     let state = 'idle'; // idle | running | paused | done
     let remaining = INTERVALS[1].seconds;
+    let endTime = null;          // wall-clock time when timer expires
     let tickInterval = null;
     let audioCtx = null;
     let setCount = 1;
@@ -298,6 +302,9 @@
 
     function ensureAudio() {
       if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      // iOS suspends the AudioContext when the page is backgrounded — resume it
+      // before any playback so the signal still fires after an app switch.
+      if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
       return audioCtx;
     }
 
@@ -322,23 +329,36 @@
       if (navigator.vibrate) navigator.vibrate([300, 100, 300, 100, 300]);
     }
 
-    function runTimerInterval() {
-      tickInterval = setInterval(() => {
-        remaining--;
-        if (remaining <= 0) {
-          remaining = 0;
-          clearInterval(tickInterval);
-          state = 'done';
-          setCount++;
-          getIntervalBtns().forEach(b => b.disabled = false);
-          playSignal();
-        }
+    // Compute remaining seconds from wall-clock endTime so the timer keeps
+     // counting correctly while the page is backgrounded (setInterval gets
+     // throttled/paused on iOS Safari).
+    function tick() {
+      if (state !== 'running' || endTime === null) return;
+      const newRemaining = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
+      if (newRemaining !== remaining) {
+        remaining = newRemaining;
         render();
-      }, 1000);
+      }
+      if (newRemaining <= 0) {
+        clearInterval(tickInterval);
+        tickInterval = null;
+        endTime = null;
+        state = 'done';
+        setCount++;
+        getIntervalBtns().forEach(b => b.disabled = false);
+        playSignal();
+        render();
+      }
+    }
+
+    function runTimerInterval() {
+      clearInterval(tickInterval);
+      tickInterval = setInterval(tick, 250);
     }
 
     function startTimer() {
       remaining = INTERVALS[selectedIndex].seconds;
+      endTime = Date.now() + remaining * 1000;
       state = 'running';
       getIntervalBtns().forEach(b => b.disabled = true);
       render();
@@ -347,12 +367,19 @@
 
     function pauseTimer() {
       clearInterval(tickInterval);
+      tickInterval = null;
+      // Snapshot remaining from wall clock so resume is accurate.
+      if (endTime !== null) {
+        remaining = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
+      }
+      endTime = null;
       state = 'paused';
       getIntervalBtns().forEach(b => b.disabled = false);
       render();
     }
 
     function resumeTimer() {
+      endTime = Date.now() + remaining * 1000;
       state = 'running';
       getIntervalBtns().forEach(b => b.disabled = true);
       render();
@@ -427,6 +454,21 @@
       screen.orientation.addEventListener('change', updateRotation);
     }
     updateRotation();
+
+    // Visibility handling — when returning from another app, resync the timer
+    // and resume the audio context (iOS suspends both while backgrounded).
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') return;
+      if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
+      }
+      if (state === 'running') {
+        // Force an immediate tick — if endTime already passed while we were
+        // backgrounded, this transitions to 'done' and fires the signal now.
+        tick();
+        if (state === 'running') runTimerInterval();
+      }
+    });
 
     // Service Worker
     if ('serviceWorker' in navigator) {
