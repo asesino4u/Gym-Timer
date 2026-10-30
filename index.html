@@ -70,6 +70,14 @@
       color: #e2e8f0;
     }
 
+    .version {
+      font-size: 14px;
+      font-weight: 600;
+      color: #475569;
+      letter-spacing: 0;
+      margin-left: 6px;
+    }
+
     /* Interval buttons */
     .intervals {
       display: flex;
@@ -237,7 +245,7 @@
 </head>
 <body>
 
-  <h1>Pause Timer</h1>
+  <h1>Pause Timer <span class="version">v7</span></h1>
 
   <div class="intervals" id="intervals"></div>
 
@@ -559,19 +567,11 @@
     //   - re-acquire the wake lock (the browser releases it on hide)
     document.addEventListener('visibilitychange', async () => {
       if (document.visibilityState !== 'visible') return;
-      // If audio was suspended while hidden, iOS likely dropped any beep that
-      // was scheduled to fire during that time — remember to play a fallback.
-      const audioWasSuspended = audioCtx && audioCtx.state === 'suspended';
-      if (audioWasSuspended) {
+      if (audioCtx && audioCtx.state === 'suspended') {
         try { await audioCtx.resume(); } catch(e) {}
       }
       if (state === 'running') {
         tick();
-        // If tick just transitioned to 'done' AND audio was suspended, the
-        // scheduled beep was lost — fire it now as a fallback.
-        if (state === 'done' && audioWasSuspended) {
-          try { playBeepNow(); } catch(e) {}
-        }
         if (state === 'running') runTimerInterval();
       }
       requestWakeLock();
