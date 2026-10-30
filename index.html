@@ -273,6 +273,9 @@
     let endTime = null;          // wall-clock time when timer expires
     let tickInterval = null;
     let audioCtx = null;
+    let silentSource = null;     // keep AudioContext alive while backgrounded
+    let scheduledNodes = [];     // Web Audio nodes scheduled to fire the signal
+    let wakeLock = null;         // Screen Wake Lock sentinel
     let setCount = 1;
 
     const intervalsEl = document.getElementById('intervals');
@@ -302,6 +305,8 @@
       getIntervalBtns().forEach((b, i) => b.classList.toggle('active', i === index));
       state = 'idle';
       remaining = INTERVALS[index].seconds;
+      cancelScheduledBeep();
+      stopSilentAudio();
       render();
     }
 
@@ -313,13 +318,62 @@
 
     function ensureAudio() {
       if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      // iOS suspends the AudioContext when the page is backgrounded — resume it
-      // before any playback so the signal still fires after an app switch.
       if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
       return audioCtx;
     }
 
-    function playBeepSound() {
+    // Play an inaudible buffer in a loop while the timer runs. iOS tends to
+    // suspend the AudioContext of a backgrounded page unless it is actively
+    // playing something — keeping this silent stream alive gives scheduled
+    // beeps a much better chance of firing when the app is in the background.
+    function startSilentAudio() {
+      if (silentSource) return;
+      const ctx = ensureAudio();
+      const buffer = ctx.createBuffer(1, ctx.sampleRate * 1, ctx.sampleRate);
+      silentSource = ctx.createBufferSource();
+      silentSource.buffer = buffer; // zeros = silence
+      silentSource.loop = true;
+      silentSource.connect(ctx.destination);
+      try { silentSource.start(); } catch(e) {}
+    }
+
+    function stopSilentAudio() {
+      if (!silentSource) return;
+      try { silentSource.stop(); } catch(e) {}
+      try { silentSource.disconnect(); } catch(e) {}
+      silentSource = null;
+    }
+
+    // Schedule the end-of-timer beep on the Web Audio clock. The audio engine
+    // runs on its own thread and may still fire scheduled events while JS is
+    // throttled in the background.
+    function scheduleBeepAt(audioTime) {
+      cancelScheduledBeep();
+      const ctx = ensureAudio();
+      [0, 0.35, 0.70].forEach(offset => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = 'sine';
+        osc.frequency.value = 880;
+        const startAt = audioTime + offset;
+        gain.gain.setValueAtTime(0.6, startAt);
+        gain.gain.exponentialRampToValueAtTime(0.001, startAt + 0.25);
+        osc.start(startAt);
+        osc.stop(startAt + 0.25);
+        scheduledNodes.push(osc);
+      });
+    }
+
+    function cancelScheduledBeep() {
+      scheduledNodes.forEach(n => { try { n.stop(0); } catch(e) {} });
+      scheduledNodes = [];
+    }
+
+    // Immediate-fire fallback (used if the pre-scheduled beep somehow didn't
+    // fire — e.g. iOS fully suspended the audio engine while backgrounded).
+    function playBeepNow() {
       const ctx = ensureAudio();
       [0, 0.35, 0.70].forEach(offset => {
         const osc = ctx.createOscillator();
@@ -336,8 +390,26 @@
     }
 
     function playSignal() {
-      try { playBeepSound(); } catch(e) {}
+      try { playBeepNow(); } catch(e) {}
       if (navigator.vibrate) navigator.vibrate([300, 100, 300, 100, 300]);
+    }
+
+    // Screen Wake Lock — keep the display on while the app is in the
+    // foreground. The browser auto-releases the lock when the page becomes
+    // hidden, so we re-request on every visibility change.
+    async function requestWakeLock() {
+      try {
+        if ('wakeLock' in navigator && document.visibilityState === 'visible') {
+          wakeLock = await navigator.wakeLock.request('screen');
+          wakeLock.addEventListener('release', () => { wakeLock = null; });
+        }
+      } catch(e) {}
+    }
+
+    function releaseWakeLock() {
+      if (!wakeLock) return;
+      try { wakeLock.release(); } catch(e) {}
+      wakeLock = null;
     }
 
     // Compute remaining seconds from wall-clock endTime so the timer keeps
@@ -357,7 +429,12 @@
         state = 'done';
         setCount++;
         getIntervalBtns().forEach(b => b.disabled = false);
+        // The beep was pre-scheduled; also fire now in case iOS dropped the
+        // scheduled event while backgrounded. Playing twice is a no-op you
+        // hear as one slightly longer beep.
         playSignal();
+        stopSilentAudio();
+        cancelScheduledBeep();
         render();
       }
     }
@@ -374,18 +451,25 @@
       getIntervalBtns().forEach(b => b.disabled = true);
       render();
       runTimerInterval();
+
+      // Keep audio engine alive + pre-schedule the beep on the audio clock
+      // so it still fires if JS gets suspended in the background.
+      ensureAudio();
+      startSilentAudio();
+      scheduleBeepAt(audioCtx.currentTime + remaining);
     }
 
     function pauseTimer() {
       clearInterval(tickInterval);
       tickInterval = null;
-      // Snapshot remaining from wall clock so resume is accurate.
       if (endTime !== null) {
         remaining = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
       }
       endTime = null;
       state = 'paused';
       getIntervalBtns().forEach(b => b.disabled = false);
+      cancelScheduledBeep();
+      stopSilentAudio();
       render();
     }
 
@@ -395,6 +479,10 @@
       getIntervalBtns().forEach(b => b.disabled = true);
       render();
       runTimerInterval();
+
+      ensureAudio();
+      startSilentAudio();
+      scheduleBeepAt(audioCtx.currentTime + remaining);
     }
 
     function render() {
@@ -466,20 +554,25 @@
     }
     updateRotation();
 
-    // Visibility handling — when returning from another app, resync the timer
-    // and resume the audio context (iOS suspends both while backgrounded).
-    document.addEventListener('visibilitychange', () => {
+    // Visibility handling — on return from another app:
+    //   - resume audio context (iOS suspends it while backgrounded)
+    //   - force a tick so an expired timer transitions to 'done' + plays beep
+    //   - re-acquire the wake lock (the browser releases it on hide)
+    document.addEventListener('visibilitychange', async () => {
       if (document.visibilityState !== 'visible') return;
       if (audioCtx && audioCtx.state === 'suspended') {
-        audioCtx.resume().catch(() => {});
+        try { await audioCtx.resume(); } catch(e) {}
       }
       if (state === 'running') {
-        // Force an immediate tick — if endTime already passed while we were
-        // backgrounded, this transitions to 'done' and fires the signal now.
         tick();
         if (state === 'running') runTimerInterval();
       }
+      requestWakeLock();
     });
+
+    // Request wake lock immediately on load so the screen stays on while the
+    // app is in the foreground, independent of whether a timer is running.
+    requestWakeLock();
 
     // Service Worker
     if ('serviceWorker' in navigator) {
