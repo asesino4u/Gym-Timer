@@ -429,10 +429,9 @@
         state = 'done';
         setCount++;
         getIntervalBtns().forEach(b => b.disabled = false);
-        // The beep was pre-scheduled; also fire now in case iOS dropped the
-        // scheduled event while backgrounded. Playing twice is a no-op you
-        // hear as one slightly longer beep.
-        playSignal();
+        // The beep was pre-scheduled on the Web Audio clock and fires on its
+        // own — don't play it again here. Only vibrate (can't be pre-scheduled).
+        if (navigator.vibrate) navigator.vibrate([300, 100, 300, 100, 300]);
         stopSilentAudio();
         cancelScheduledBeep();
         render();
@@ -560,11 +559,19 @@
     //   - re-acquire the wake lock (the browser releases it on hide)
     document.addEventListener('visibilitychange', async () => {
       if (document.visibilityState !== 'visible') return;
-      if (audioCtx && audioCtx.state === 'suspended') {
+      // If audio was suspended while hidden, iOS likely dropped any beep that
+      // was scheduled to fire during that time — remember to play a fallback.
+      const audioWasSuspended = audioCtx && audioCtx.state === 'suspended';
+      if (audioWasSuspended) {
         try { await audioCtx.resume(); } catch(e) {}
       }
       if (state === 'running') {
         tick();
+        // If tick just transitioned to 'done' AND audio was suspended, the
+        // scheduled beep was lost — fire it now as a fallback.
+        if (state === 'done' && audioWasSuspended) {
+          try { playBeepNow(); } catch(e) {}
+        }
         if (state === 'running') runTimerInterval();
       }
       requestWakeLock();
