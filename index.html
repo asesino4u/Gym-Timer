@@ -245,7 +245,7 @@
 </head>
 <body>
 
-  <h1>Pause Timer <span class="version">v7</span></h1>
+  <h1>Pause Timer <span class="version">v8</span></h1>
 
   <div class="intervals" id="intervals"></div>
 
@@ -439,9 +439,12 @@
         getIntervalBtns().forEach(b => b.disabled = false);
         // The beep was pre-scheduled on the Web Audio clock and fires on its
         // own — don't play it again here. Only vibrate (can't be pre-scheduled).
+        // NOTE: don't call cancelScheduledBeep() here — the oscillators are
+        // firing right now and have their own self-contained stop times. A
+        // cancel would silence oscillators 2 and 3 before they can play.
         if (navigator.vibrate) navigator.vibrate([300, 100, 300, 100, 300]);
         stopSilentAudio();
-        cancelScheduledBeep();
+        scheduledNodes = []; // just drop references, let them finish naturally
         render();
       }
     }
