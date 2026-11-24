@@ -245,7 +245,7 @@
 </head>
 <body>
 
-  <h1>Pause Timer <span class="version">v8</span></h1>
+  <h1>Pause Timer <span class="version">v1</span></h1>
 
   <div class="intervals" id="intervals"></div>
 
@@ -253,7 +253,7 @@
 
   <div class="center-stack">
     <div class="timer-circle" id="timerCircle">
-      <div class="timer-display" id="timerDisplay">01:00</div>
+      <div class="timer-display" id="timerDisplay">02:00</div>
       <div class="done-label">Fertig!</div>
     </div>
 
@@ -267,33 +267,54 @@
   </div>
 
   <script>
+    // ────────────────────────────────────────────────────────────────────────
+    // Config
+    // ────────────────────────────────────────────────────────────────────────
     const INTERVALS = [
-      { label: '30s', seconds: 30 },
-      { label: '1 min', seconds: 60 },
+      { label: '30s',   seconds: 30  },
+      { label: '1 min', seconds: 60  },
       { label: '2 min', seconds: 120 },
       { label: '3 min', seconds: 180 },
       { label: '5 min', seconds: 300 },
     ];
+    const DEFAULT_INDEX = 2; // 2 min
 
-    let selectedIndex = 1;
-    let state = 'idle'; // idle | running | paused | done
-    let remaining = INTERVALS[1].seconds;
-    let endTime = null;          // wall-clock time when timer expires
+    // Signal pattern: 3× 880 Hz, 250 ms Ton, 350 ms Start-zu-Start-Abstand
+    // → 250 ms Ton + 100 ms Stille, dreimal.
+    const BEEP_FREQ_HZ   = 880;
+    const BEEP_DUR_S     = 0.25;
+    const BEEP_GAP_S     = 0.10;   // 350 ms Abstand − 250 ms Ton = 100 ms Lücke
+    const VIBRATE_PATTERN = [300, 100, 300, 100, 300];
+
+    // ────────────────────────────────────────────────────────────────────────
+    // State
+    // ────────────────────────────────────────────────────────────────────────
+    let selectedIndex = DEFAULT_INDEX;
+    let state     = 'idle';                         // idle | running | paused | done
+    let remaining = INTERVALS[DEFAULT_INDEX].seconds;
+    let endTime   = null;                           // wall-clock ms when timer expires
     let tickInterval = null;
-    let audioCtx = null;
-    let silentSource = null;     // keep AudioContext alive while backgrounded
-    let scheduledNodes = [];     // Web Audio nodes scheduled to fire the signal
-    let wakeLock = null;         // Screen Wake Lock sentinel
     let setCount = 1;
 
-    const intervalsEl = document.getElementById('intervals');
-    const timerCircle = document.getElementById('timerCircle');
-    const timerDisplay = document.getElementById('timerDisplay');
-    const mainBtn = document.getElementById('mainBtn');
-    const hint = document.getElementById('hint');
-    const setNumber = document.getElementById('setNumber');
+    // Audio
+    let audioEl       = null;   // HTMLAudioElement — plays silence+beep WAV blob
+    let audioBlobUrl  = null;   // current blob: URL, revoked on replace
+    let audioUnlocked = false;  // true once media playback has been unlocked by user gesture
 
-    // Build interval buttons
+    // Wake lock
+    let wakeLock = null;
+
+    // DOM refs
+    const intervalsEl   = document.getElementById('intervals');
+    const timerCircle   = document.getElementById('timerCircle');
+    const timerDisplay  = document.getElementById('timerDisplay');
+    const mainBtn       = document.getElementById('mainBtn');
+    const hint          = document.getElementById('hint');
+    const setNumber     = document.getElementById('setNumber');
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Interval pills
+    // ────────────────────────────────────────────────────────────────────────
     INTERVALS.forEach((item, i) => {
       const btn = document.createElement('button');
       btn.className = 'interval-btn' + (i === selectedIndex ? ' active' : '');
@@ -302,9 +323,7 @@
       intervalsEl.appendChild(btn);
     });
 
-    function getIntervalBtns() {
-      return intervalsEl.querySelectorAll('.interval-btn');
-    }
+    const getIntervalBtns = () => intervalsEl.querySelectorAll('.interval-btn');
 
     function selectInterval(index) {
       if (state === 'running') return;
@@ -313,105 +332,116 @@
       getIntervalBtns().forEach((b, i) => b.classList.toggle('active', i === index));
       state = 'idle';
       remaining = INTERVALS[index].seconds;
-      cancelScheduledBeep();
-      stopSilentAudio();
+      stopAudio();
       render();
     }
 
-    function formatTime(s) {
+    const formatTime = s => {
       const m = Math.floor(s / 60);
       const sec = s % 60;
       return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
-    }
+    };
 
-    function ensureAudio() {
-      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
-      return audioCtx;
-    }
+    // ────────────────────────────────────────────────────────────────────────
+    // Audio: generate a WAV blob containing `silentSeconds` of silence followed
+    // by the 3× beep pattern, then play it via an <audio> element. iOS keeps
+    // playing media elements in the background / with screen locked, so the
+    // beep fires at the exact wall-clock time even when JS is throttled.
+    // ────────────────────────────────────────────────────────────────────────
+    function buildTimerAudioBlob(silentSeconds) {
+      const sampleRate = 11025;
+      const beepSamples = Math.floor(BEEP_DUR_S * sampleRate);
+      const gapSamples  = Math.floor(BEEP_GAP_S * sampleRate);
+      const silenceSamples = Math.max(0, Math.floor(silentSeconds * sampleRate));
+      const totalSamples = silenceSamples + 3 * beepSamples + 2 * gapSamples;
 
-    // Play an inaudible buffer in a loop while the timer runs. iOS tends to
-    // suspend the AudioContext of a backgrounded page unless it is actively
-    // playing something — keeping this silent stream alive gives scheduled
-    // beeps a much better chance of firing when the app is in the background.
-    function startSilentAudio() {
-      if (silentSource) return;
-      const ctx = ensureAudio();
-      const buffer = ctx.createBuffer(1, ctx.sampleRate * 1, ctx.sampleRate);
-      silentSource = ctx.createBufferSource();
-      silentSource.buffer = buffer; // zeros = silence
-      silentSource.loop = true;
-      silentSource.connect(ctx.destination);
-      try { silentSource.start(); } catch(e) {}
-    }
+      const bytesPerSample = 2;         // 16-bit PCM
+      const dataSize = totalSamples * bytesPerSample;
+      const buffer = new ArrayBuffer(44 + dataSize);
+      const view = new DataView(buffer);
 
-    function stopSilentAudio() {
-      if (!silentSource) return;
-      try { silentSource.stop(); } catch(e) {}
-      try { silentSource.disconnect(); } catch(e) {}
-      silentSource = null;
-    }
+      // RIFF/WAVE header
+      const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+      writeStr(0, 'RIFF');
+      view.setUint32(4, 36 + dataSize, true);
+      writeStr(8, 'WAVE');
+      writeStr(12, 'fmt ');
+      view.setUint32(16, 16, true);          // PCM fmt chunk size
+      view.setUint16(20, 1, true);           // PCM format
+      view.setUint16(22, 1, true);           // mono
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * bytesPerSample, true);
+      view.setUint16(32, bytesPerSample, true);
+      view.setUint16(34, 16, true);          // 16 bits per sample
+      writeStr(36, 'data');
+      view.setUint32(40, dataSize, true);
 
-    // Schedule the end-of-timer beep on the Web Audio clock. The audio engine
-    // runs on its own thread and may still fire scheduled events while JS is
-    // throttled in the background.
-    function scheduleBeepAt(audioTime) {
-      cancelScheduledBeep();
-      const ctx = ensureAudio();
-      [0, 0.35, 0.70].forEach(offset => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.type = 'sine';
-        osc.frequency.value = 880;
-        const startAt = audioTime + offset;
-        gain.gain.setValueAtTime(0.6, startAt);
-        gain.gain.exponentialRampToValueAtTime(0.001, startAt + 0.25);
-        osc.start(startAt);
-        osc.stop(startAt + 0.25);
-        scheduledNodes.push(osc);
-      });
-    }
+      // Silence section is already zero-filled by ArrayBuffer init.
+      let offset = 44 + silenceSamples * bytesPerSample;
 
-    function cancelScheduledBeep() {
-      scheduledNodes.forEach(n => { try { n.stop(0); } catch(e) {} });
-      scheduledNodes = [];
-    }
-
-    // Immediate-fire fallback (used if the pre-scheduled beep somehow didn't
-    // fire — e.g. iOS fully suspended the audio engine while backgrounded).
-    function playBeepNow() {
-      const ctx = ensureAudio();
-      [0, 0.35, 0.70].forEach(offset => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.type = 'sine';
-        osc.frequency.value = 880;
-        gain.gain.setValueAtTime(0.6, ctx.currentTime + offset);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + offset + 0.25);
-        osc.start(ctx.currentTime + offset);
-        osc.stop(ctx.currentTime + offset + 0.25);
-      });
-    }
-
-    function playSignal() {
-      try { playBeepNow(); } catch(e) {}
-      if (navigator.vibrate) navigator.vibrate([300, 100, 300, 100, 300]);
-    }
-
-    // Screen Wake Lock — keep the display on while the app is in the
-    // foreground. The browser auto-releases the lock when the page becomes
-    // hidden, so we re-request on every visibility change.
-    async function requestWakeLock() {
-      try {
-        if ('wakeLock' in navigator && document.visibilityState === 'visible') {
-          wakeLock = await navigator.wakeLock.request('screen');
-          wakeLock.addEventListener('release', () => { wakeLock = null; });
+      const writeBeep = () => {
+        for (let i = 0; i < beepSamples; i++) {
+          const t = i / sampleRate;
+          // 5 ms attack + exponential decay so the beep sounds clean, not clicky
+          const env = t < 0.005 ? t / 0.005 : Math.exp(-(t - 0.005) * 8);
+          const sample = Math.sin(2 * Math.PI * BEEP_FREQ_HZ * t) * env * 0.75;
+          view.setInt16(offset, Math.max(-1, Math.min(1, sample)) * 32767, true);
+          offset += 2;
         }
-      } catch(e) {}
+      };
+      writeBeep(); offset += gapSamples * 2;
+      writeBeep(); offset += gapSamples * 2;
+      writeBeep();
+
+      return new Blob([buffer], { type: 'audio/wav' });
+    }
+
+    function ensureAudioEl() {
+      if (audioEl) return audioEl;
+      audioEl = new Audio();
+      audioEl.preload = 'auto';
+      // playsInline keeps iOS from taking over the screen for "video"
+      audioEl.playsInline = true;
+      return audioEl;
+    }
+
+    // MUST be called from a user-gesture handler. Starts playback of a WAV
+    // blob containing `silentSeconds` of silence + beep pattern.
+    function playTimerAudio(silentSeconds) {
+      const el = ensureAudioEl();
+      try { el.pause(); } catch(e) {}
+      if (audioBlobUrl) { try { URL.revokeObjectURL(audioBlobUrl); } catch(e) {} }
+
+      const blob = buildTimerAudioBlob(silentSeconds);
+      audioBlobUrl = URL.createObjectURL(blob);
+      el.src = audioBlobUrl;
+      el.currentTime = 0;
+
+      const p = el.play();
+      if (p && p.then) {
+        p.then(() => { audioUnlocked = true; })
+         .catch(() => { /* iOS silently rejected — unlock still marked false */ });
+      }
+    }
+
+    function stopAudio() {
+      if (!audioEl) return;
+      try { audioEl.pause(); } catch(e) {}
+      try { audioEl.removeAttribute('src'); audioEl.load(); } catch(e) {}
+      if (audioBlobUrl) { try { URL.revokeObjectURL(audioBlobUrl); } catch(e) {} audioBlobUrl = null; }
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Wake Lock — must be requested inside a user gesture on iOS Safari.
+    // ────────────────────────────────────────────────────────────────────────
+    async function requestWakeLock() {
+      if (!('wakeLock' in navigator)) return;
+      if (document.visibilityState !== 'visible') return;
+      if (wakeLock) return;
+      try {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => { wakeLock = null; });
+      } catch(e) { /* denied without user gesture or OS-level block */ }
     }
 
     function releaseWakeLock() {
@@ -420,9 +450,9 @@
       wakeLock = null;
     }
 
-    // Compute remaining seconds from wall-clock endTime so the timer keeps
-     // counting correctly while the page is backgrounded (setInterval gets
-     // throttled/paused on iOS Safari).
+    // ────────────────────────────────────────────────────────────────────────
+    // Timer loop — wall-clock based so it stays correct through JS throttling.
+    // ────────────────────────────────────────────────────────────────────────
     function tick() {
       if (state !== 'running' || endTime === null) return;
       const newRemaining = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
@@ -430,43 +460,49 @@
         remaining = newRemaining;
         render();
       }
-      if (newRemaining <= 0) {
-        clearInterval(tickInterval);
-        tickInterval = null;
-        endTime = null;
-        state = 'done';
-        setCount++;
-        getIntervalBtns().forEach(b => b.disabled = false);
-        // The beep was pre-scheduled on the Web Audio clock and fires on its
-        // own — don't play it again here. Only vibrate (can't be pre-scheduled).
-        // NOTE: don't call cancelScheduledBeep() here — the oscillators are
-        // firing right now and have their own self-contained stop times. A
-        // cancel would silence oscillators 2 and 3 before they can play.
-        if (navigator.vibrate) navigator.vibrate([300, 100, 300, 100, 300]);
-        stopSilentAudio();
-        scheduledNodes = []; // just drop references, let them finish naturally
-        render();
-      }
+      if (newRemaining <= 0) finishTimer();
     }
 
-    function runTimerInterval() {
+    function finishTimer() {
+      clearInterval(tickInterval);
+      tickInterval = null;
+      const expiredAt = endTime;
+      endTime = null;
+      state = 'done';
+      setCount++;
+      getIntervalBtns().forEach(b => b.disabled = false);
+
+      // Vibrate only if the timer just expired now (within ~2 s). If the user
+      // comes back long after expiry, the audio file already played — don't
+      // add a late, jarring vibration.
+      const sinceExpiryMs = Date.now() - (expiredAt || Date.now());
+      if (sinceExpiryMs < 2000 && navigator.vibrate) {
+        navigator.vibrate(VIBRATE_PATTERN);
+      }
+      render();
+      releaseWakeLock();
+    }
+
+    function runTicker() {
       clearInterval(tickInterval);
       tickInterval = setInterval(tick, 250);
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // START / PAUSE / WEITER — every state transition happens inside a
+    // user-gesture click handler so both audio.play() and wakeLock.request()
+    // are allowed on iOS.
+    // ────────────────────────────────────────────────────────────────────────
     function startTimer() {
       remaining = INTERVALS[selectedIndex].seconds;
       endTime = Date.now() + remaining * 1000;
       state = 'running';
       getIntervalBtns().forEach(b => b.disabled = true);
       render();
-      runTimerInterval();
+      runTicker();
 
-      // Keep audio engine alive + pre-schedule the beep on the audio clock
-      // so it still fires if JS gets suspended in the background.
-      ensureAudio();
-      startSilentAudio();
-      scheduleBeepAt(audioCtx.currentTime + remaining);
+      playTimerAudio(remaining);
+      requestWakeLock();
     }
 
     function pauseTimer() {
@@ -478,9 +514,11 @@
       endTime = null;
       state = 'paused';
       getIntervalBtns().forEach(b => b.disabled = false);
-      cancelScheduledBeep();
-      stopSilentAudio();
+      stopAudio();
       render();
+      // Wake Lock behalten wir im Paused-State ebenfalls bei — Nutzer könnte
+      // gerade auf den Timer blicken. Freigabe erst bei neuem Intervall oder
+      // Fertig.
     }
 
     function resumeTimer() {
@@ -488,15 +526,16 @@
       state = 'running';
       getIntervalBtns().forEach(b => b.disabled = true);
       render();
-      runTimerInterval();
+      runTicker();
 
-      ensureAudio();
-      startSilentAudio();
-      scheduleBeepAt(audioCtx.currentTime + remaining);
+      playTimerAudio(remaining);
+      requestWakeLock();
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // Render
+    // ────────────────────────────────────────────────────────────────────────
     function render() {
-      // Timer display
       if (state === 'done') {
         timerDisplay.textContent = '✓';
         timerCircle.className = 'timer-circle done';
@@ -505,57 +544,47 @@
         timerCircle.className = 'timer-circle';
       }
 
-      // Button
       mainBtn.className = 'main-btn ' + state;
-      if (state === 'idle')    { mainBtn.textContent = 'START'; }
-      if (state === 'running') { mainBtn.textContent = 'PAUSE';  }
-      if (state === 'paused')  { mainBtn.textContent = 'WEITER'; }
-      if (state === 'done')    { mainBtn.textContent = 'WEITER'; }
+      if (state === 'idle')    mainBtn.textContent = 'START';
+      if (state === 'running') mainBtn.textContent = 'PAUSE';
+      if (state === 'paused')  mainBtn.textContent = 'WEITER';
+      if (state === 'done')    mainBtn.textContent = 'WEITER';
 
-      // Hint
       if (state === 'idle')    hint.textContent = 'Wähle deine Pausenzeit';
       if (state === 'running') hint.textContent = 'Tippe PAUSE zum Anhalten';
       if (state === 'paused')  hint.textContent = 'Pausiert — tippe WEITER';
       if (state === 'done')    hint.textContent = 'Bereit für den nächsten Satz?';
 
-      // Set counter
       setNumber.textContent = setCount;
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // Main button — single click handler, stays within one user gesture
+    // ────────────────────────────────────────────────────────────────────────
     mainBtn.addEventListener('click', () => {
-      // Init AudioContext on first user gesture (required by browsers)
-      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-
-      if (state === 'done')         startTimer();
-      else if (state === 'idle')    startTimer();
-      else if (state === 'running') pauseTimer();
+      if (state === 'running')      pauseTimer();
       else if (state === 'paused')  resumeTimer();
+      else                          startTimer(); // idle | done
     });
 
-    // Reset counter button
     document.getElementById('resetBtn').addEventListener('click', () => {
       setCount = 1;
       render();
     });
 
-    // Orientation handling — keep WEITER button pointing toward charging port
+    // ────────────────────────────────────────────────────────────────────────
+    // Orientation — counter-rotate body so WEITER points toward charging port
+    // ────────────────────────────────────────────────────────────────────────
     function updateRotation() {
-      // angle: 0 = portrait, 90 = rotated counter-clockwise (top tilts left),
-      //       -90/270 = rotated clockwise (top tilts right), 180 = upside down
       let angle = 0;
       if (screen.orientation && typeof screen.orientation.angle === 'number') {
         angle = screen.orientation.angle;
       } else if (typeof window.orientation === 'number') {
         angle = window.orientation;
       }
-
-      if (angle === 90) {
-        document.body.dataset.rot = 'left';   // phone rotated left (charging port on right)
-      } else if (angle === -90 || angle === 270) {
-        document.body.dataset.rot = 'right';  // phone rotated right (charging port on left)
-      } else {
-        document.body.dataset.rot = 'portrait';
-      }
+      if (angle === 90)                              document.body.dataset.rot = 'left';
+      else if (angle === -90 || angle === 270)       document.body.dataset.rot = 'right';
+      else                                           document.body.dataset.rot = 'portrait';
     }
     window.addEventListener('orientationchange', updateRotation);
     window.addEventListener('resize', updateRotation);
@@ -564,27 +593,28 @@
     }
     updateRotation();
 
-    // Visibility handling — on return from another app:
-    //   - resume audio context (iOS suspends it while backgrounded)
-    //   - force a tick so an expired timer transitions to 'done' + plays beep
-    //   - re-acquire the wake lock (the browser releases it on hide)
-    document.addEventListener('visibilitychange', async () => {
+    // ────────────────────────────────────────────────────────────────────────
+    // Visibility — when returning from another app or screen-on:
+    //   • force a tick so an already-expired timer transitions to 'done'
+    //     (ohne späten Beep — der WAV-Lauf hat den Beep bereits selbst erzeugt)
+    //   • re-acquire the wake lock (browser released it on hide)
+    // ────────────────────────────────────────────────────────────────────────
+    document.addEventListener('visibilitychange', () => {
       if (document.visibilityState !== 'visible') return;
-      if (audioCtx && audioCtx.state === 'suspended') {
-        try { await audioCtx.resume(); } catch(e) {}
-      }
       if (state === 'running') {
         tick();
-        if (state === 'running') runTimerInterval();
+        if (state === 'running') {
+          runTicker();
+          requestWakeLock();
+        }
+      } else if (state === 'paused') {
+        requestWakeLock();
       }
-      requestWakeLock();
     });
 
-    // Request wake lock immediately on load so the screen stays on while the
-    // app is in the foreground, independent of whether a timer is running.
-    requestWakeLock();
-
+    // ────────────────────────────────────────────────────────────────────────
     // Service Worker
+    // ────────────────────────────────────────────────────────────────────────
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('sw.js');
     }
