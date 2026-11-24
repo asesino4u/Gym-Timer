@@ -245,7 +245,7 @@
 </head>
 <body>
 
-  <h1>Pause Timer <span class="version">v1</span></h1>
+  <h1>Pause Timer <span class="version">v2</span></h1>
 
   <div class="intervals" id="intervals"></div>
 
@@ -253,7 +253,7 @@
 
   <div class="center-stack">
     <div class="timer-circle" id="timerCircle">
-      <div class="timer-display" id="timerDisplay">02:00</div>
+      <div class="timer-display" id="timerDisplay">01:00</div>
       <div class="done-label">Fertig!</div>
     </div>
 
@@ -277,7 +277,7 @@
       { label: '3 min', seconds: 180 },
       { label: '5 min', seconds: 300 },
     ];
-    const DEFAULT_INDEX = 2; // 2 min
+    const DEFAULT_INDEX = 1; // 1 min
 
     // Signal pattern: 3× 880 Hz, 250 ms Ton, 350 ms Start-zu-Start-Abstand
     // → 250 ms Ton + 100 ms Stille, dreimal.

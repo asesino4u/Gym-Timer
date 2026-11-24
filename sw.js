@@ -1,7 +1,7 @@
 // Gym Timer PWA — service worker
 // IMPORTANT: bump CACHE in lockstep with the <span class="version"> in
 // index.html on every update. New baseline starts at v1.
-const CACHE = 'gym-timer-v1';
+const CACHE = 'gym-timer-v2';
 const FILES = [
   '/Gym-Timer/',
   '/Gym-Timer/index.html',
